@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         DeskManager Extension Automation
 // @namespace    http://tampermonkey.net/
-// @version      1.3
-// @description  Auto-fill DeskManager tickets via secure handshake
+// @version      1.4
+// @description  Auto-fill DeskManager tickets via Cloud Fetch (No URL params needed)
 // @author       Antigravity
 // @match        https://brasinfo.desk.ms/*
 // @grant        none
@@ -11,80 +11,74 @@
 (function() {
     'use strict';
 
-    const API_BASE_URL = "https://desk-manager-extension.vercel.app";
-    const HELPER_ORIGIN = "https://desk-manager-extension.vercel.app";
-    const SESSION_DRAFT_KEY = 'desk_auto_draft_id';
+    const API_URL_LATEST = "https://desk-manager-extension.vercel.app/api/latest";
+    const SESSION_DONE_KEY = 'desk_auto_filled_id'; // Para não preencher 2x o mesmo
     const SAVE_PENDING_KEY = 'desk_save_pending';
 
-    console.log("[DeskAuto] Módulo carregado. Modo: Handshake.");
+    console.log("[DeskAuto] Módulo v1.4 Ativo. Buscando chamado pendente na nuvem...");
 
     // Iniciar
     init();
 
     async function init() {
-        // 1. Tentar capturar o draftId do SessionStorage primeiro
-        let draftId = sessionStorage.getItem(SESSION_DRAFT_KEY);
+        showStatusIndicator("Buscando chamado recente...");
 
-        if (!draftId) {
-            console.log("[DeskAuto] Aguardando dados da Helper Page...");
+        try {
+            // Busca o último chamado criado no Vercel/Redis
+            const response = await fetch(API_URL_LATEST);
             
-            // Tentar avisar a página de origem que estamos prontos para receber o ID
-            if (window.opener) {
-                window.opener.postMessage("DESK_AUTO_READY", HELPER_ORIGIN);
+            if (response.status === 404 || response.status === 410) {
+                console.log("[DeskAuto] Nenhum chamado recente pendente para automação.");
+                hideStatusIndicator();
+                return;
             }
 
-            // Escutar a resposta com o ID
-            window.addEventListener("message", (event) => {
-                if (event.origin !== HELPER_ORIGIN) return;
-                if (event.data && event.data.type === "SET_DRAFT_ID") {
-                    console.log("[DeskAuto] DraftID recebido via Handshake:", event.data.draftId);
-                    sessionStorage.setItem(SESSION_DRAFT_KEY, event.data.draftId);
-                    location.reload(); // Recarregar para processar com o ID salvo
-                }
-            });
-            return;
-        }
+            if (!response.ok) throw new Error("Erro na API.");
 
-        console.log("[DeskAuto] Processando DraftID:", draftId);
-        showStatusIndicator("Buscando dados na nuvem...");
-
-        // 2. Buscar dados da API
-        try {
-            const response = await fetch(`${API_BASE_URL}/api/draft?id=${draftId}`);
-            if (!response.ok) throw new Error("Draft não encontrado.");
-            
             const data = await response.json();
-            showStatusIndicator(`Dados carregados: ${data.subject.substring(0, 15)}...`);
             
-            // 3. Iniciar automação
-            startAutomation(data);
+            // Verificar se já preenchemos este chamado nesta sessão (evitar loop)
+            if (sessionStorage.getItem(SESSION_DONE_KEY) === data.draftId) {
+                console.log("[DeskAuto] Chamado já processado.");
+                hideStatusIndicator();
+                return;
+            }
+
+            console.log("[DeskAuto] Chamado detectado:", data.subject);
+            showStatusIndicator(`Chamado Detectado: ${data.subject.substring(0, 15)}...`);
+
+            // Iniciar automação
+            startAutomationFlow(data);
 
         } catch (e) {
-            console.error("[DeskAuto] Erro na API:", e);
-            showStatusIndicator("Erro de conexão.", true);
+            console.error("[DeskAuto] Falha ao sincronizar:", e);
+            showStatusIndicator("Erro de Sincronia ❌", true);
         }
     }
 
-    function startAutomation(data) {
-        // Monitorar redirecionamento indesejado para Home
+    function startAutomationFlow(data) {
+        // 1. Garantir que estamos na página de Chamados
         autoNavigate();
 
-        // Monitorar abertura do modal
-        const obs = new MutationObserver(() => {
-            const hasForm = document.querySelector("textarea[name='descricao']") || document.querySelector(".cke_wysiwyg_frame");
+        // 2. Vigiar o Modal
+        const observer = new MutationObserver(() => {
+            const hasForm = document.querySelector("textarea[name='descricao']") || 
+                            document.querySelector(".cke_wysiwyg_frame") ||
+                            document.querySelector("#descricao");
             if (hasForm) fillForm(data);
         });
-        obs.observe(document.body, { childList: true, subtree: true });
+        observer.observe(document.body, { childList: true, subtree: true });
 
-        // Tentar clicar no "+" a cada 3 segundos
+        // 3. Tentar abrir o modal automaticamente
         setInterval(() => {
-            if (window.location.hash.includes("ChamadosSuporte")) {
-                const btn = document.querySelector(".btn-novo-chamado") || 
-                            document.querySelector(".floating-button") || 
-                            document.querySelector("button i.fa-plus")?.closest("button");
-                if (btn && !document.querySelector("textarea[name='descricao']")) {
-                    console.log("[DeskAuto] Abrindo formulário...");
-                    btn.click();
+            if (window.location.hash.includes("ChamadosSuporte") || window.location.hash.includes("Ticket")) {
+                const btnPlus = document.querySelector(".btn-novo-chamado") || 
+                               document.querySelector(".floating-button") || 
+                               document.querySelector("button i.fa-plus")?.closest("button");
+                
+                if (btnPlus && !document.querySelector("textarea[name='descricao']")) {
+                    console.log("[DeskAuto] Clicando no '+'...");
+                    btnPlus.click();
                 }
             }
         }, 3000);
@@ -92,8 +86,8 @@
 
     function autoNavigate() {
         setInterval(() => {
-            if (window.location.hash.includes("Home")) {
-                console.log("[DeskAuto] Redirecionando para Chamados...");
+            if (window.location.hash.includes("Home") || window.location.hash === "" || window.location.hash === "#") {
+                console.log("[DeskAuto] Saindo da Home...");
                 const menu = Array.from(document.querySelectorAll("a, span, li")).find(el => el.innerText.trim() === "Lista de Chamados");
                 if (menu) menu.click();
             }
@@ -125,20 +119,20 @@
             }
 
             // Solicitante
-            const req = document.querySelector("input[name='solicitante']") || document.querySelector(".select2-search__field");
+            const req = document.querySelector("input[name='solicitante']") || document.querySelector(".select2-search__field") || document.querySelector("#solicitante");
             if (req) {
                 req.value = data.email;
                 req.dispatchEvent(new Event('input', { bubbles: true }));
+                req.dispatchEvent(new Event('change', { bubbles: true }));
             }
 
-            showStatusIndicator("✓ Preenchido! Verifique e Salve.");
+            showStatusIndicator("✓ Preenchido!");
+            sessionStorage.setItem(SESSION_DONE_KEY, data.draftId);
             
-            // Monitorar botão salvar para limpar tudo
+            // Monitorar salvamento
             document.querySelectorAll("button").forEach(b => {
                 if (b.innerText.includes("Salvar")) {
-                    b.addEventListener("click", () => {
-                        sessionStorage.setItem(SAVE_PENDING_KEY, 'true');
-                    });
+                    b.addEventListener("click", () => sessionStorage.setItem(SAVE_PENDING_KEY, 'true'));
                 }
             });
         } catch (e) {
@@ -151,19 +145,23 @@
         if (!el) {
             el = document.createElement("div");
             el.id = "desk-auto-status";
-            el.style = "position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:999999; padding:10px 25px; border-radius:30px; font-family:sans-serif; font-size:13px; font-weight:bold; box-shadow:0 4px 15px rgba(0,0,0,0.3);";
+            el.style = "position:fixed; top:15px; left:50%; transform:translateX(-50%); z-index:999999; padding:10px 30px; border-radius:30px; font-family:sans-serif; font-size:14px; font-weight:bold; box-shadow:0 10px 30px rgba(0,0,0,0.4); pointer-events:none; transition: all 0.5s;";
             document.body.appendChild(el);
         }
         el.innerText = "🤖 " + text;
         el.style.background = isError ? "#f44336" : "#2196F3";
         el.style.color = "white";
-        if (text.includes("✓")) setTimeout(() => el.style.opacity = "0", 6000);
+        el.style.opacity = "1";
+    }
+
+    function hideStatusIndicator() {
+        const el = document.getElementById("desk-auto-status");
+        if (el) el.style.opacity = "0";
     }
 
     // Detecção de salvamento
     if (sessionStorage.getItem(SAVE_PENDING_KEY) && document.body.innerText.includes("sucesso")) {
         sessionStorage.removeItem(SAVE_PENDING_KEY);
-        sessionStorage.removeItem(SESSION_DRAFT_KEY);
-        alert("Chamado Criado!");
+        alert("Chamado Criado com Sucesso! ✅");
     }
 })();
