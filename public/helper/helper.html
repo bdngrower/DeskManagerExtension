@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>DeskManager - Revisão de Chamado</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 20px; background: #f0f2f5; color: #333; }
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-width: 800px; margin: auto; }
+        h1 { color: #0078d4; margin-top: 0; border-bottom: 2px solid #0078d4; padding-bottom: 10px; }
+        .field { margin-bottom: 15px; }
+        label { font-weight: bold; display: block; margin-bottom: 5px; color: #555; }
+        input, textarea, select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+        textarea { height: 150px; font-family: inherit; }
+        .suggestion { font-size: 0.85rem; color: #0078d4; margin-top: 3px; font-style: italic; }
+        .actions { margin-top: 25px; display: flex; gap: 10px; }
+        .btn { padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: opacity 0.2s; }
+        .btn-primary { background: #0078d4; color: white; }
+        .btn-secondary { background: #e1dfdd; color: #333; }
+        .btn:hover { opacity: 0.85; }
+        #loading { text-align: center; padding: 50px; }
+    </style>
+</head>
+<body>
+    <div id="loading">Carregando dados do chamado...</div>
+    
+    <div id="content" class="card" style="display:none;">
+        <h1>Revisar Chamado</h1>
+        
+        <div class="field">
+            <label>Cliente Sugerido</label>
+            <input type="text" id="client" readonly>
+            <div class="suggestion" id="client-hint">Baseado no domínio do remetente</div>
+        </div>
+
+        <div class="field">
+            <label>Categoria Sugerida</label>
+            <select id="category">
+                <option value="hardware">Hardware > Desktop / Notebook</option>
+                <option value="contas">Contas e Acessos > E-mail</option>
+                <option value="aplicativos">Aplicativos > Office</option>
+                <option value="outros" selected>Outros</option>
+            </select>
+        </div>
+
+        <div class="field">
+            <label>Assunto</label>
+            <input type="text" id="subject">
+        </div>
+
+        <div class="field">
+            <label>Descrição Preparada</label>
+            <textarea id="description"></textarea>
+        </div>
+
+        <div class="actions">
+            <button class="btn btn-secondary" onclick="window.close()">Cancelar</button>
+            <button class="btn btn-primary">Abrir no DeskManager</button>
+        </div>
+    </div>
+
+    <script src="helper.js"></script>
+</body>
+</html>
