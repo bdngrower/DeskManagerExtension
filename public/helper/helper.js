@@ -76,13 +76,24 @@ function saveAndOpenDeskManager() {
     console.log("Dados salvos no localStorage:", data);
 
     // TODO: Substituir pela URL real da tela de novo chamado do seu DeskManager
-    // Exemplo: https://suaempresa.desk.manager/ticket/add
     const urlParams = new URLSearchParams(window.location.search);
     const draftId = urlParams.get('draft');
-    // Usamos # no final para o servidor do DeskManager ignorar e não dar erro de login
-    const DESKMANAGER_NEW_TICKET_URL = `https://brasinfo.desk.ms/?Ticket#ChamadosSuporte&draftId=${draftId}`; 
+    const DESKMANAGER_NEW_TICKET_URL = `https://brasinfo.desk.ms/?Ticket#ChamadosSuporte`; 
     
+    console.log("[Helper] Abrindo DeskManager e aguardando sinal de prontidão...");
     const win = window.open(DESKMANAGER_NEW_TICKET_URL, "_blank");
+    
+    // Sistema de Handshake: Espera o script no DeskManager dizer que carregou
+    const handshakeListener = (event) => {
+        if (event.origin !== "https://brasinfo.desk.ms") return;
+        if (event.data === "DESK_AUTO_READY") {
+            console.log("[Helper] Script detectado no DeskManager. Enviando DraftID...");
+            win.postMessage({ type: "SET_DRAFT_ID", draftId: draftId }, event.origin);
+            // window.removeEventListener("message", handshakeListener); // Opcional
+        }
+    };
+    window.addEventListener("message", handshakeListener);
+
     if (win) win.focus();
 }
 
