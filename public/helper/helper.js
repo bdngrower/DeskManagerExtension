@@ -79,7 +79,9 @@ function saveAndOpenDeskManager() {
     // Exemplo: https://suaempresa.desk.manager/ticket/add
     const DESKMANAGER_NEW_TICKET_URL = "https://brasinfo.desk.ms/?Ticket#ChamadosSuporte"; 
     
-    window.open(DESKMANAGER_NEW_TICKET_URL, "_blank");
+    // Abrir e garantir foco
+    const win = window.open(DESKMANAGER_NEW_TICKET_URL, "_blank");
+    if (win) win.focus();
 }
 
 function suggestClient(domain, sender) {

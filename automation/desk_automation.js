@@ -1,185 +1,193 @@
 /**
  * Script de Automação para DeskManager (brasinfo.desk.ms)
- * Funções: Preenchimento automático em MODAL, detecção de salvamento e captura de número.
+ * Otimizado para abertura de chamados via modal no botão "+"
  */
 
 (function() {
     const STORAGE_KEY = 'deskmanager_auto_data';
     const SAVE_PENDING_KEY = 'desk_save_pending';
 
-    console.log("[DeskAuto] Iniciando módulo de automação para brasinfo.desk.ms...");
+    console.log("[DeskAuto] Iniciando módulo de automação...");
 
-    // 1. Verificar se acabamos de salvar um chamado (para mostrar o resultado)
+    // 1. Verificar sucesso de salvamento anterior
     checkIfTicketWasSaved();
 
-    // 2. Tentar preencher o formulário
+    // 2. Iniciar monitoramento de dados
     function init() {
         const rawData = localStorage.getItem(STORAGE_KEY);
-        if (!rawData) return;
+        if (!rawData) {
+            console.log("[DeskAuto] Nenhum dado pendente para preenchimento.");
+            return;
+        }
 
-        console.log("[DeskAuto] Dados aguardando preenchimento...");
+        const data = JSON.parse(rawData);
+        console.log("[DeskAuto] Dados prontos para preenchimento no DeskManager.");
 
-        // Usar um Observer para detectar quando o formulário de criação aparece (pois é um modal)
-        const observer = new MutationObserver((mutations, obs) => {
-            // Procurar por campos do modal
-            const descriptionField = document.querySelector("textarea[name='descricao']") || 
-                                   document.querySelector(".cke_wysiwyg_frame") ||
-                                   document.querySelector("#descricao");
+        // Observer para detectar o Modal de Criação de Chamado
+        const observer = new MutationObserver(() => {
+            const modal = document.querySelector(".modal-content") || document.querySelector(".panel-modal");
+            const hasDescription = document.querySelector("textarea[name='descricao']") || 
+                                 document.querySelector(".cke_wysiwyg_frame") || 
+                                 document.querySelector("#descricao");
 
-            if (descriptionField) {
-                console.log("[DeskAuto] Modal de chamado detectado. Preenchendo...");
-                const data = JSON.parse(rawData);
+            if (modal && hasDescription) {
+                console.log("[DeskAuto] Modal 'Criar Chamado' detectado!");
                 fillForm(data);
-                // obs.disconnect(); // Mantemos o observer caso ele queira abrir outro? Não, melhor desconectar após preencher uma vez.
+                // Opcional: obs.disconnect(); se quiser preencher apenas uma vez por refresh
             }
         });
 
         observer.observe(document.body, { childList: true, subtree: true });
 
-        // Tentar clicar no botão "+" automaticamente se ele existir e o modal não estiver aberto
-        setTimeout(() => {
+        // Tentar clicar no botão "+" sozinho se ele estiver visível
+        autoClickPlus();
+    }
+
+    function autoClickPlus() {
+        let attempts = 0;
+        const interval = setInterval(() => {
+            attempts++;
+            // Procurar pelo botão "+" azul do canto inferior direito (comum em DeskManager)
             const btnPlus = document.querySelector(".btn-novo-chamado") || 
                            document.querySelector(".floating-button") || 
-                           document.querySelector("button i.fa-plus")?.parentElement;
-            
-            if (btnPlus && !document.querySelector("textarea[name='descricao']")) {
-                console.log("[DeskAuto] Clicando no botão '+' para abrir o formulário...");
+                           document.querySelector("button i.fa-plus")?.closest("button") ||
+                           document.querySelector("a[href*='chamados_novo']");
+
+            if (btnPlus) {
+                console.log("[DeskAuto] Botão '+' encontrado. Clicando...");
                 btnPlus.click();
+                clearInterval(interval);
             }
-        }, 2000);
+
+            if (attempts > 20) {
+                console.warn("[DeskAuto] Não foi possível encontrar o botão '+' automaticamente.");
+                clearInterval(interval);
+            }
+        }, 1000);
     }
 
     async function fillForm(data) {
+        console.log("[DeskAuto] Preenchendo campos do modal...");
+        
         try {
-            // Preencher Assunto
-            const subjectField = document.querySelector("input[name='assunto']") || 
-                               document.querySelector("#assunto") ||
-                               document.querySelector(".select2-search__field");
-            if (subjectField) {
-                subjectField.value = data.subject;
-                subjectField.dispatchEvent(new Event('input', { bubbles: true }));
+            // 1. Assunto
+            const subject = document.querySelector("input[name='assunto']") || 
+                          document.querySelector("#assunto") ||
+                          document.querySelector("[name*='assunto']");
+            if (subject) {
+                subject.value = data.subject;
+                subject.dispatchEvent(new Event('input', { bubbles: true }));
+                subject.dispatchEvent(new Event('change', { bubbles: true }));
             }
 
-            // Preencher Descrição
+            // 2. Descrição (CKEditor ou Textarea)
             await fillDescription(data.description);
 
-            // Preencher Solicitante (Geralmente Select2 ou similar)
-            const requesterField = document.querySelector("input[name='solicitante']") || 
-                                 document.querySelector("#solicitante");
-            if (requesterField) {
-                requesterField.value = data.email;
-                requesterField.dispatchEvent(new Event('input', { bubbles: true }));
+            // 3. Solicitante / Cliente (Tentar vários IDs comuns do DeskManager)
+            // Nobrasinfo.desk.ms pode ser um select2
+            const requester = document.querySelector("select[name='solicitante']") || 
+                             document.querySelector("input[name='solicitante']") ||
+                             document.querySelector("#solicitante");
+            
+            if (requester) {
+                requester.value = data.email;
+                requester.dispatchEvent(new Event('change', { bubbles: true }));
             }
 
-            console.log("[DeskAuto] Formulário preenchido com sucesso.");
-            
-            // Monitorar clique no botão de salvar
-            observeSaveAction();
+            // 4. Categoria / Solicitação
+            const categorySelect = document.querySelector("select[name='categoria']") || 
+                                 document.querySelector("select[name='solicitacao']");
+            if (categorySelect && data.category) {
+                categorySelect.value = data.category;
+                categorySelect.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+
+            console.log("[DeskAuto] Preenchimento disparado.");
+            observeSaveButtons();
 
         } catch (e) {
-            console.error("[DeskAuto] Erro ao preencher form:", e);
+            console.error("[DeskAuto] Falha no preenchimento:", e);
         }
     }
 
     async function fillDescription(text) {
-        // Tentar textarea simples
-        const textarea = document.querySelector("textarea[name='descricao']") || document.querySelector("#descricao");
-        if (textarea) {
-            textarea.value = text;
-            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        // Textarea normal
+        const tarea = document.querySelector("textarea[name='descricao']") || document.querySelector("#descricao");
+        if (tarea) {
+            tarea.value = text;
+            tarea.dispatchEvent(new Event('input', { bubbles: true }));
         }
 
-        // Tentar CKEditor (comum no DeskManager)
+        // CKEditor iFrame
         const iframe = document.querySelector('iframe.cke_wysiwyg_frame');
         if (iframe && iframe.contentDocument) {
             iframe.contentDocument.body.innerHTML = text.replace(/\n/g, '<br>');
         }
     }
 
-    function observeSaveAction() {
-        // Procurar botão de salvar (geralmente .btn-success ou .btn-primary dentro do modal)
-        const saveButtons = document.querySelectorAll("button.btn-success, button.btn-primary, #btn-salvar");
-        saveButtons.forEach(btn => {
-            if (btn.innerText.toLowerCase().includes("salvar") || btn.innerText.toLowerCase().includes("abrir")) {
+    function observeSaveButtons() {
+        const btns = document.querySelectorAll("button.btn-success, button.btn-primary");
+        btns.forEach(btn => {
+            if (btn.innerText.includes("Salvar") || btn.innerText.includes("Abrir")) {
                 btn.addEventListener("click", () => {
-                    console.log("[DeskAuto] Botão salvar clicado.");
                     localStorage.setItem(SAVE_PENDING_KEY, 'true');
+                    console.log("[DeskAuto] Salvamento iniciado.");
                 });
             }
         });
     }
 
     async function checkIfTicketWasSaved() {
-        const isPending = localStorage.getItem(SAVE_PENDING_KEY);
-        if (!isPending) return;
+        const pending = localStorage.getItem(SAVE_PENDING_KEY);
+        if (!pending) return;
 
-        // Verificar se apareceu mensagem de sucesso (toast/alert)
-        const successNotify = document.querySelector(".toast-success") || 
-                            document.querySelector(".alert-success") ||
-                            document.body.innerText.includes("sucesso");
+        const successNotice = document.querySelector(".toast-success") || 
+                             document.querySelector(".alert-success") ||
+                             document.body.innerText.includes("salvo com sucesso");
 
-        if (successNotify) {
-            console.log("[DeskAuto] Sucesso detectado pós-salvamento.");
+        if (successNotice) {
+            console.log("[DeskAuto] Chamado salvo!");
             localStorage.removeItem(SAVE_PENDING_KEY);
             localStorage.removeItem(STORAGE_KEY);
-
-            const number = await captureTicketNumber();
-            showResultUI(number);
+            
+            const num = await captureNumber();
+            showPopup(num);
         }
     }
 
-    async function captureTicketNumber() {
-        // Tentar pegar do toast ou do detalhe do chamado que abre depois
-        const selectors = [".toast-message", ".ticket-id", "h1", "h2", ".breadcrumb"];
-        for (let sel of selectors) {
-            const el = document.querySelector(sel);
-            if (el) {
-                const match = el.innerText.match(/\d+-\d+/) || el.innerText.match(/\d+/);
-                if (match) return match[0];
-            }
+    async function captureNumber() {
+        // Tentar pegar do toast ou dos breadcrumbs
+        const el = document.querySelector(".toast-message") || 
+                   document.querySelector(".breadcrumb .active") ||
+                   document.querySelector("h1, h2");
+        if (el) {
+            const m = el.innerText.match(/\d+-\d+/) || el.innerText.match(/\d+/);
+            return m ? m[0] : null;
         }
         return null;
     }
 
-    function showResultUI(number) {
-        const div = document.createElement("div");
-        div.id = "desk-auto-result";
-        div.style = `
-            position: fixed; bottom: 80px; right: 20px; z-index: 999999;
-            background: white; padding: 15px; border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3); border-left: 5px solid #0078d4;
-            max-width: 300px; font-family: sans-serif;
+    function showPopup(num) {
+        const d = document.createElement("div");
+        d.id = "desk-auto-final";
+        d.style = "position:fixed; bottom:100px; right:20px; z-index:999999; background:white; padding:15px; border-radius:10px; box-shadow:0 5px 20px rgba(0,0,0,0.4); border:2px solid #0078d4;";
+        
+        const title = num ? "🚀 Chamado Criado!" : "⚠️ Salvo!";
+        const body = num ? `Número: <strong>${num}</strong>` : "Não consegui capturar o número.";
+        const msg = `Seu chamado foi registrado com sucesso sob o número ${num}.`;
+
+        d.innerHTML = `
+            <div style="font-weight:bold; color:#0078d4;">${title}</div>
+            <div style="margin:10px 0;">${body}</div>
+            ${num ? `<button id="copy-btn-desk" style="width:100%; cursor:pointer;">Copiar Mensagem</button>` : ''}
+            <button onclick="document.getElementById('desk-auto-final').remove()" style="margin-top:10px; width:100%; border:none; background:none; font-size:10px; cursor:pointer;">Fechar</button>
         `;
-
-        const title = number ? "Chamado Criado!" : "Atenção";
-        const body = number ? `Número: <strong>${number}</strong>` : "Chamado salvo, mas não capturei o número.";
-        const msg = `Seu chamado foi registrado com sucesso sob o número ${number}.`;
-
-        div.innerHTML = `
-            <div style="font-weight:bold; color:#0078d4; margin-bottom:5px;">${title}</div>
-            <div style="margin-bottom:10px;">${body}</div>
-            ${number ? `
-            <div style="display:flex; gap:5px;">
-                <button id="desk-copy-num" style="flex:1; cursor:pointer; padding:5px;">Copiar Nº</button>
-                <button id="desk-copy-msg" style="flex:1; cursor:pointer; padding:5px;">Mensagem</button>
-            </div>` : ''}
-            <button onclick="document.getElementById('desk-auto-result').remove()" style="margin-top:10px; width:100%; border:none; background:none; color:#999; cursor:pointer; font-size:11px;">Fechar</button>
-        `;
-
-        document.body.appendChild(div);
-
-        if (number) {
-            document.getElementById("desk-copy-num").onclick = () => {
-                navigator.clipboard.writeText(number);
-                alert("Número copiado!");
-            };
-            document.getElementById("desk-copy-msg").onclick = () => {
-                navigator.clipboard.writeText(msg);
-                alert("Mensagem copiada!");
-            };
-        }
+        document.body.appendChild(d);
+        if(num) document.getElementById("copy-btn-desk").onclick = () => {
+            navigator.clipboard.writeText(msg);
+            alert("Mensagem copiada para retorno!");
+        };
     }
 
-    // Iniciar
     init();
 })();
