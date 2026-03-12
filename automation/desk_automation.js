@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         DeskManager Extension Automation
 // @namespace    http://tampermonkey.net/
-// @version      1.1
-// @description  Auto-fill DeskManager tickets from Outlook Add-in (brasinfo.desk.ms)
+// @version      1.2
+// @description  Auto-fill DeskManager tickets with cross-page persistence
 // @author       Antigravity
 // @match        https://brasinfo.desk.ms/*
 // @grant        none
@@ -12,218 +12,158 @@
     'use strict';
 
     const API_BASE_URL = "https://desk-manager-extension.vercel.app";
+    const SESSION_DRAFT_KEY = 'desk_auto_draft_id';
     const SAVE_PENDING_KEY = 'desk_save_pending';
 
-    console.log("[DeskAuto] Módulo de automação carregado.");
+    console.log("[DeskAuto] Módulo carregado com sucesso!");
 
-    // 1. Verificar sucesso de salvamento anterior
-    checkIfTicketWasSaved();
+    // Iniciar
+    init();
 
-    // 2. Iniciar monitoramento de dados
     async function init() {
+        // 1. Tentar capturar o draftId da URL ou do SessionStorage (para persistir entre redirecionamentos)
         const urlParams = new URLSearchParams(window.location.search);
-        const hashParams = new URLSearchParams(window.location.hash.split('&')[1] || window.location.hash.replace('#', '?'));
-        const draftId = urlParams.get('draftId') || hashParams.get('draftId');
+        const hashPart = window.location.hash.includes('&') ? window.location.hash.split('&')[1] : window.location.hash.replace('#', '?');
+        const hashParams = new URLSearchParams(hashPart);
+        
+        let draftId = urlParams.get('draftId') || hashParams.get('draftId');
+
+        if (draftId) {
+            console.log("[DeskAuto] DraftID encontrado na URL:", draftId);
+            sessionStorage.setItem(SESSION_DRAFT_KEY, draftId);
+        } else {
+            draftId = sessionStorage.getItem(SESSION_DRAFT_KEY);
+        }
 
         if (!draftId) {
-            console.log("[DeskAuto] Nenhum draftId encontrado na URL. Automação inativa.");
+            console.log("[DeskAuto] Nenhum draftId pendente.");
             return;
         }
 
-        console.log(`[DeskAuto] draftId detectado: ${draftId}. Buscando dados...`);
-        
+        // Mostrar indicador visual de que a automação está AGUARDANDO
+        showStatusIndicator("Buscando dados...");
+
         try {
             const response = await fetch(`${API_BASE_URL}/api/draft?id=${draftId}`);
-            if (!response.ok) throw new Error("Falha ao buscar draft da API.");
+            if (!response.ok) throw new Error("Draft expirado ou inválido.");
             
             const data = await response.json();
-            console.log("[DeskAuto] Dados do chamado recuperados com sucesso!");
+            showStatusIndicator(`Dados carregados: ${data.subject.substring(0, 20)}...`);
 
-            // Iniciar fluxo de preenchimento
-            startAutomationFlow(data);
+            // Iniciar fluxo
+            startAutomation(data);
 
         } catch (e) {
-            console.error("[DeskAuto] Erro ao carregar dados:", e);
+            console.error("[DeskAuto] Erro:", e);
+            showStatusIndicator("Erro ao carregar dados.", true);
         }
     }
 
-    function startAutomationFlow(data) {
-        // Monitorar a URL/Hash para garantir que estamos na página de Chamados
-        autoNavigateToTickets();
+    function startAutomation(data) {
+        // 1. Navegação automática se necessário
+        autoNavigate();
 
-        // Observer para detectar o Modal de Criação de Chamado
-        const observer = new MutationObserver(() => {
+        // 2. Observer para o modal
+        const obs = new MutationObserver(() => {
             const modal = document.querySelector(".modal-content") || document.querySelector(".panel-modal");
-            const hasDescription = document.querySelector("textarea[name='descricao']") || 
-                                 document.querySelector(".cke_wysiwyg_frame") || 
-                                 document.querySelector("#descricao");
+            const hasDesc = document.querySelector("textarea[name='descricao']") || document.querySelector(".cke_wysiwyg_frame");
 
-            if (modal && hasDescription) {
-                console.log("[DeskAuto] Modal 'Criar Chamado' detectado!");
+            if (modal && hasDesc) {
                 fillForm(data);
             }
         });
+        obs.observe(document.body, { childList: true, subtree: true });
 
-        observer.observe(document.body, { childList: true, subtree: true });
-
-        // Tentar clicar no botão "+" sozinho a cada 2 segundos se estivermos na página correta
+        // 3. Clique automático no "+"
         setInterval(() => {
             if (window.location.hash.includes("ChamadosSuporte")) {
-                autoClickPlus();
+                const btn = document.querySelector(".btn-novo-chamado") || 
+                            document.querySelector(".floating-button") || 
+                            document.querySelector("button i.fa-plus")?.closest("button");
+                if (btn && !document.querySelector("textarea[name='descricao']")) {
+                    btn.click();
+                }
             }
         }, 2000);
     }
 
-    function autoNavigateToTickets() {
-        const checkNavigation = setInterval(() => {
+    function autoNavigate() {
+        setInterval(() => {
             if (window.location.hash.includes("Home") || !window.location.hash.includes("ChamadosSuporte")) {
-                console.log("[DeskAuto] Fora da página de Chamados. Tentando navegar...");
-                
-                const menuItems = Array.from(document.querySelectorAll("a, span, li"));
-                const targetMenu = menuItems.find(el => el.innerText.trim() === "Lista de Chamados" || 
-                                                     el.innerText.trim() === "Chamados");
-                
-                if (targetMenu) {
-                    console.log("[DeskAuto] Menu 'Lista de Chamados' encontrado. Clicando...");
-                    targetMenu.click();
-                } else {
-                    const link = document.querySelector("a[href*='ChamadosSuporte']");
-                    if (link) link.click();
-                }
-            } else {
-                console.log("[DeskAuto] Página de Chamados confirmada.");
-                clearInterval(checkNavigation);
+                const menu = Array.from(document.querySelectorAll("a, span")).find(el => el.innerText.trim() === "Lista de Chamados");
+                if (menu) menu.click();
             }
         }, 5000);
     }
 
-    function autoClickPlus() {
-        if (document.querySelector("textarea[name='descricao']")) return;
-
-        const btnPlus = document.querySelector(".btn-novo-chamado") || 
-                       document.querySelector(".floating-button") || 
-                       document.querySelector("button i.fa-plus")?.closest("button") ||
-                       document.querySelector(".plus-button");
-
-        if (btnPlus) {
-            console.log("[DeskAuto] Clicando no botão '+'...");
-            btnPlus.click();
-        }
-    }
-
     async function fillForm(data) {
-        if (window.lastFilledAt && Date.now() - window.lastFilledAt < 3000) return;
-        window.lastFilledAt = Date.now();
+        if (window.lastFill && Date.now() - window.lastFill < 3000) return;
+        window.lastFill = Date.now();
 
-        console.log("[DeskAuto] Preenchendo campos do modal...");
-        
+        console.log("[DeskAuto] Preenchendo...");
         try {
-            // 1. Assunto
-            const subject = document.querySelector("input[name='assunto']") || 
-                          document.querySelector("#assunto");
-            if (subject) {
-                subject.value = data.subject || "";
-                subject.dispatchEvent(new Event('input', { bubbles: true }));
+            // Assunto
+            const sub = document.querySelector("input[name='assunto']") || document.querySelector("#assunto");
+            if (sub) {
+                sub.value = data.subject;
+                sub.dispatchEvent(new Event('input', { bubbles: true }));
             }
 
-            // 2. Descrição
-            await fillDescription(data.description);
-
-            // 3. Solicitante / Cliente
-            const requester = document.querySelector("input[name='solicitante']") || 
-                             document.querySelector("#solicitante") ||
-                             document.querySelector(".select2-search__field");
-            if (requester) {
-                requester.value = data.email || "";
-                requester.dispatchEvent(new Event('input', { bubbles: true }));
-                requester.dispatchEvent(new Event('change', { bubbles: true }));
+            // Descrição
+            const tarea = document.querySelector("textarea[name='descricao']") || document.querySelector("#descricao");
+            if (tarea) {
+                tarea.value = data.description;
+                tarea.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            const iframe = document.querySelector('iframe.cke_wysiwyg_frame');
+            if (iframe && iframe.contentDocument) {
+                iframe.contentDocument.body.innerHTML = data.description.replace(/\n/g, '<br>');
             }
 
-            // 4. Mapeamento de Categoria
-            const catSelect = document.querySelector("select[name='categoria']") || document.querySelector("select[name='solicitacao']");
-            if (catSelect && data.category) {
-                catSelect.value = data.category;
-                catSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            // Solicitante
+            const req = document.querySelector("input[name='solicitante']") || document.querySelector(".select2-search__field");
+            if (req) {
+                req.value = data.email;
+                req.dispatchEvent(new Event('input', { bubbles: true }));
             }
 
-            console.log("[DeskAuto] Preenchimento disparado.");
-            observeSaveButtons();
+            showStatusIndicator("✓ Pronto para Salvar!");
+            
+            // Monitorar botão salvar
+            document.querySelectorAll("button").forEach(b => {
+                if (b.innerText.includes("Salvar")) {
+                    b.addEventListener("click", () => sessionStorage.setItem(SAVE_PENDING_KEY, 'true'));
+                }
+            });
 
         } catch (e) {
-            console.error("[DeskAuto] Erro no preenchimento:", e);
+            console.error(e);
         }
     }
 
-    async function fillDescription(text) {
-        const tarea = document.querySelector("textarea[name='descricao']") || document.querySelector("#descricao");
-        if (tarea) {
-            tarea.value = text;
-            tarea.dispatchEvent(new Event('input', { bubbles: true }));
+    function showStatusIndicator(text, isError = false) {
+        let el = document.getElementById("desk-auto-status");
+        if (!el) {
+            el = document.createElement("div");
+            el.id = "desk-auto-status";
+            el.style = "position:fixed; top:10px; left:50%; transform:translateX(-50%); z-index:99999; padding:8px 20px; border-radius:30px; font-size:12px; font-weight:bold; box-shadow:0 2px 10px rgba(0,0,0,0.2); transition: all 0.3s;";
+            document.body.appendChild(el);
         }
-        const iframe = document.querySelector('iframe.cke_wysiwyg_frame');
-        if (iframe && iframe.contentDocument) {
-            iframe.contentDocument.body.innerHTML = text.replace(/\n/g, '<br>');
+        el.innerText = "🤖 " + text;
+        el.style.background = isError ? "#ff4d4d" : "#0078d4";
+        el.style.color = "white";
+        if (text.includes("✓")) {
+            setTimeout(() => el.style.opacity = "0", 5000);
         }
     }
 
-    function observeSaveButtons() {
-        const btns = document.querySelectorAll("button.btn-success, button.btn-primary");
-        btns.forEach(btn => {
-            if (btn.innerText.includes("Salvar") || btn.innerText.includes("Abrir")) {
-                btn.addEventListener("click", () => {
-                    localStorage.setItem(SAVE_PENDING_KEY, 'true');
-                });
+    function checkIfTicketWasSaved() {
+        if (localStorage.getItem(SAVE_PENDING_KEY) || sessionStorage.getItem(SAVE_PENDING_KEY)) {
+            if (document.body.innerText.includes("sucesso")) {
+                 sessionStorage.removeItem(SAVE_PENDING_KEY);
+                 sessionStorage.removeItem(SESSION_DRAFT_KEY);
+                 alert("Chamado Criado com Sucesso!");
             }
-        });
-    }
-
-    async function checkIfTicketWasSaved() {
-        const pending = localStorage.getItem(SAVE_PENDING_KEY);
-        if (!pending) return;
-
-        const successNotice = document.querySelector(".toast-success") || 
-                             document.querySelector(".alert-success") ||
-                             document.body.innerText.includes("salvo com sucesso");
-
-        if (successNotice) {
-            localStorage.removeItem(SAVE_PENDING_KEY);
-            const num = await captureNumber();
-            showPopup(num);
         }
     }
-
-    async function captureNumber() {
-        const el = document.querySelector(".toast-message") || 
-                   document.querySelector(".breadcrumb .active") ||
-                   document.querySelector("h1, h2");
-        if (el) {
-            const m = el.innerText.match(/\d+-\d+/) || el.innerText.match(/\d+/);
-            return m ? m[0] : null;
-        }
-        return null;
-    }
-
-    function showPopup(num) {
-        const d = document.createElement("div");
-        d.id = "desk-auto-final";
-        d.style = "position:fixed; bottom:100px; right:20px; z-index:999999; background:white; padding:15px; border-radius:10px; box-shadow:0 5px 20px rgba(0,0,0,0.4); border:2px solid #0078d4; font-family: sans-serif;";
-        
-        const title = num ? "🚀 Chamado Criado!" : "⚠️ Salvo!";
-        const body = num ? `Número: <strong>${num}</strong>` : "Não capturei o número.";
-        const msg = `Seu chamado foi registrado com sucesso sob o número ${num}.`;
-
-        d.innerHTML = `
-            <div style="font-weight:bold; color:#0078d4;">${title}</div>
-            <div style="margin:10px 0;">${body}</div>
-            ${num ? `<button id="copy-btn-desk" style="width:100%; cursor:pointer;">Copiar Mensagem</button>` : ''}
-            <button onclick="document.getElementById('desk-auto-final').remove()" style="margin-top:10px; width:100%; border:none; background:none; font-size:10px; cursor:pointer; color:#999;">Fechar</button>
-        `;
-        document.body.appendChild(d);
-        if(num) document.getElementById("copy-btn-desk").onclick = () => {
-            navigator.clipboard.writeText(msg);
-            alert("Copiado!");
-        };
-    }
-
-    init();
 })();
