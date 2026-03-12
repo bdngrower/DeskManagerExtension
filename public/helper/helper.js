@@ -79,9 +79,9 @@ function saveAndOpenDeskManager() {
     // Exemplo: https://suaempresa.desk.manager/ticket/add
     const urlParams = new URLSearchParams(window.location.search);
     const draftId = urlParams.get('draft');
-    const DESKMANAGER_NEW_TICKET_URL = `https://brasinfo.desk.ms/?Ticket&draftId=${draftId}#ChamadosSuporte`; 
+    // Usamos # no final para o servidor do DeskManager ignorar e não dar erro de login
+    const DESKMANAGER_NEW_TICKET_URL = `https://brasinfo.desk.ms/?Ticket#ChamadosSuporte&draftId=${draftId}`; 
     
-    // Abrir e garantir foco
     const win = window.open(DESKMANAGER_NEW_TICKET_URL, "_blank");
     if (win) win.focus();
 }

@@ -15,7 +15,8 @@
     // 2. Iniciar monitoramento de dados
     async function init() {
         const urlParams = new URLSearchParams(window.location.search);
-        const draftId = urlParams.get('draftId');
+        const hashParams = new URLSearchParams(window.location.hash.split('&')[1] || window.location.hash.replace('#', '?'));
+        const draftId = urlParams.get('draftId') || hashParams.get('draftId');
 
         if (!draftId) {
             console.log("[DeskAuto] Nenhum draftId encontrado na URL. Automação inativa.");
