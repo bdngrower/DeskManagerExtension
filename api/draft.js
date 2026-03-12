@@ -4,7 +4,6 @@ import { v4 as uuidv4 } from 'uuid';
 const redis = Redis.fromEnv();
 
 export default async function handler(req, res) {
-    // Permitir CORS
     res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -18,12 +17,11 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
         const { sender, email, subject, bodyHtml, bodyText, dateTime, internetMessageId } = req.body;
         
-        if (!email || !subject) {
-            return res.status(400).json({ error: 'Dados insuficientes' });
-        }
+        if (!email || !subject) return res.status(400).json({ error: 'Dados insuficientes' });
 
         const draftId = uuidv4();
         const data = {
+            draftId,
             sender,
             email,
             subject,
@@ -34,10 +32,12 @@ export default async function handler(req, res) {
             createdAt: Date.now()
         };
 
-        // Salvar no Redis com TTL de 30 minutos (1800 segundos)
-        await redis.set(draftId, JSON.stringify(data), { ex: 1800 });
+        // Salvar com prefixo draft: para organização
+        await redis.set(`draft:${draftId}`, data, { ex: 1800 });
+        
+        // Registrar como o mais recente para o robô v1.4+
+        await redis.set('latest_draft_id', draftId, { ex: 300 });
 
-        console.log(`[API] Draft criado: ${draftId}`);
         return res.json({ draftId });
     }
 
@@ -45,12 +45,11 @@ export default async function handler(req, res) {
         const { id } = req.query;
         if (!id) return res.status(400).json({ error: 'ID não informado' });
 
-        const data = await redis.get(id);
+        // Tentar com e sem prefixo para compatibilidade
+        let data = await redis.get(`draft:${id}`);
+        if (!data) data = await redis.get(id);
 
-        if (!data) {
-            return res.status(404).json({ error: 'Draft não encontrado ou expirado' });
-        }
-
+        if (!data) return res.status(404).json({ error: 'Expirado' });
         return res.json(data);
     }
 
