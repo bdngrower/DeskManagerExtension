@@ -1,6 +1,6 @@
 /**
  * Script de Automação para DeskManager (brasinfo.desk.ms)
- * Otimizado para abertura de chamados via modal no botão "+"
+ * Otimizado para navegação automática e abertura de chamados via modal no botão "+"
  */
 
 (function() {
@@ -23,6 +23,9 @@
         const data = JSON.parse(rawData);
         console.log("[DeskAuto] Dados prontos para preenchimento no DeskManager.");
 
+        // Monitorar a URL/Hash para garantir que estamos na página de Chamados
+        autoNavigateToTickets();
+
         // Observer para detectar o Modal de Criação de Chamado
         const observer = new MutationObserver(() => {
             const modal = document.querySelector(".modal-content") || document.querySelector(".panel-modal");
@@ -33,40 +36,67 @@
             if (modal && hasDescription) {
                 console.log("[DeskAuto] Modal 'Criar Chamado' detectado!");
                 fillForm(data);
-                // Opcional: obs.disconnect(); se quiser preencher apenas uma vez por refresh
             }
         });
 
         observer.observe(document.body, { childList: true, subtree: true });
 
-        // Tentar clicar no botão "+" sozinho se ele estiver visível
-        autoClickPlus();
+        // Tentar clicar no botão "+" sozinho se ele estiver visível e estivermos na página correta
+        setInterval(() => {
+            if (window.location.hash.includes("ChamadosSuporte")) {
+                autoClickPlus();
+            }
+        }, 2000);
+    }
+
+    /**
+     * Se o DeskManager redirecionar para #Home, tentamos clicar em "Lista de Chamados"
+     */
+    function autoNavigateToTickets() {
+        const checkNavigation = setInterval(() => {
+            if (window.location.hash.includes("Home") || !window.location.hash.includes("ChamadosSuporte")) {
+                console.log("[DeskAuto] Fora da página de Chamados. Tentando navegar...");
+                
+                // Procurar pelo item de menu "Lista de Chamados"
+                const menuItems = Array.from(document.querySelectorAll("a, span, li"));
+                const targetMenu = menuItems.find(el => el.innerText.trim() === "Lista de Chamados" || 
+                                                     el.innerText.trim() === "Chamados");
+                
+                if (targetMenu) {
+                    console.log("[DeskAuto] Menu 'Lista de Chamados' encontrado. Clicando...");
+                    targetMenu.click();
+                } else {
+                    // Tentar seletor por link direto
+                    const link = document.querySelector("a[href*='ChamadosSuporte']");
+                    if (link) link.click();
+                }
+            } else {
+                console.log("[DeskAuto] Página de Chamados confirmada.");
+                clearInterval(checkNavigation);
+            }
+        }, 3000);
     }
 
     function autoClickPlus() {
-        let attempts = 0;
-        const interval = setInterval(() => {
-            attempts++;
-            // Procurar pelo botão "+" azul do canto inferior direito (comum em DeskManager)
-            const btnPlus = document.querySelector(".btn-novo-chamado") || 
-                           document.querySelector(".floating-button") || 
-                           document.querySelector("button i.fa-plus")?.closest("button") ||
-                           document.querySelector("a[href*='chamados_novo']");
+        // Se o modal já estiver aberto, não clicamos de novo
+        if (document.querySelector("textarea[name='descricao']")) return;
 
-            if (btnPlus) {
-                console.log("[DeskAuto] Botão '+' encontrado. Clicando...");
-                btnPlus.click();
-                clearInterval(interval);
-            }
+        const btnPlus = document.querySelector(".btn-novo-chamado") || 
+                       document.querySelector(".floating-button") || 
+                       document.querySelector("button i.fa-plus")?.closest("button") ||
+                       document.querySelector(".plus-button");
 
-            if (attempts > 20) {
-                console.warn("[DeskAuto] Não foi possível encontrar o botão '+' automaticamente.");
-                clearInterval(interval);
-            }
-        }, 1000);
+        if (btnPlus) {
+            console.log("[DeskAuto] Clicando no botão '+'...");
+            btnPlus.click();
+        }
     }
 
     async function fillForm(data) {
+        // Evitar preencher várias vezes o mesmo modal
+        if (window.lastFilledAt && Date.now() - window.lastFilledAt < 2000) return;
+        window.lastFilledAt = Date.now();
+
         console.log("[DeskAuto] Preenchendo campos do modal...");
         
         try {
@@ -80,11 +110,10 @@
                 subject.dispatchEvent(new Event('change', { bubbles: true }));
             }
 
-            // 2. Descrição (CKEditor ou Textarea)
+            // 2. Descrição
             await fillDescription(data.description);
 
-            // 3. Solicitante / Cliente (Tentar vários IDs comuns do DeskManager)
-            // Nobrasinfo.desk.ms pode ser um select2
+            // 3. Solicitante
             const requester = document.querySelector("select[name='solicitante']") || 
                              document.querySelector("input[name='solicitante']") ||
                              document.querySelector("#solicitante");
@@ -111,14 +140,12 @@
     }
 
     async function fillDescription(text) {
-        // Textarea normal
         const tarea = document.querySelector("textarea[name='descricao']") || document.querySelector("#descricao");
         if (tarea) {
             tarea.value = text;
             tarea.dispatchEvent(new Event('input', { bubbles: true }));
         }
 
-        // CKEditor iFrame
         const iframe = document.querySelector('iframe.cke_wysiwyg_frame');
         if (iframe && iframe.contentDocument) {
             iframe.contentDocument.body.innerHTML = text.replace(/\n/g, '<br>');
@@ -156,7 +183,6 @@
     }
 
     async function captureNumber() {
-        // Tentar pegar do toast ou dos breadcrumbs
         const el = document.querySelector(".toast-message") || 
                    document.querySelector(".breadcrumb .active") ||
                    document.querySelector("h1, h2");
