@@ -1,9 +1,16 @@
-/**
- * Script de Automação para DeskManager (brasinfo.desk.ms)
- * Otimizado para navegação automática e busca de dados via API Vercel + Redis
- */
+// ==UserScript==
+// @name         DeskManager Extension Automation
+// @namespace    http://tampermonkey.net/
+// @version      1.1
+// @description  Auto-fill DeskManager tickets from Outlook Add-in (brasinfo.desk.ms)
+// @author       Antigravity
+// @match        https://brasinfo.desk.ms/*
+// @grant        none
+// ==/UserScript==
 
 (function() {
+    'use strict';
+
     const API_BASE_URL = "https://desk-manager-extension.vercel.app";
     const SAVE_PENDING_KEY = 'desk_save_pending';
 
@@ -54,7 +61,6 @@
             if (modal && hasDescription) {
                 console.log("[DeskAuto] Modal 'Criar Chamado' detectado!");
                 fillForm(data);
-                // observer.disconnect(); // Opcional: desconectar para evitar re-preenchimento
             }
         });
 
@@ -88,7 +94,7 @@
                 console.log("[DeskAuto] Página de Chamados confirmada.");
                 clearInterval(checkNavigation);
             }
-        }, 3000);
+        }, 5000);
     }
 
     function autoClickPlus() {
@@ -97,8 +103,7 @@
         const btnPlus = document.querySelector(".btn-novo-chamado") || 
                        document.querySelector(".floating-button") || 
                        document.querySelector("button i.fa-plus")?.closest("button") ||
-                       document.querySelector(".plus-button") ||
-                       document.querySelector("#btn_novo_chamado"); // ID comum
+                       document.querySelector(".plus-button");
 
         if (btnPlus) {
             console.log("[DeskAuto] Clicando no botão '+'...");
@@ -115,15 +120,13 @@
         try {
             // 1. Assunto
             const subject = document.querySelector("input[name='assunto']") || 
-                          document.querySelector("#assunto") ||
-                          document.querySelector("[name*='assunto']");
+                          document.querySelector("#assunto");
             if (subject) {
                 subject.value = data.subject || "";
                 subject.dispatchEvent(new Event('input', { bubbles: true }));
             }
 
             // 2. Descrição
-            const cleanDescription = (data.description || "").replace(/--- DADOS DO E-MAIL ---/g, "").trim();
             await fillDescription(data.description);
 
             // 3. Solicitante / Cliente
@@ -143,7 +146,7 @@
                 catSelect.dispatchEvent(new Event('change', { bubbles: true }));
             }
 
-            console.log("[DeskAuto] Preenchimento disparado com sucesso.");
+            console.log("[DeskAuto] Preenchimento disparado.");
             observeSaveButtons();
 
         } catch (e) {
@@ -169,7 +172,6 @@
             if (btn.innerText.includes("Salvar") || btn.innerText.includes("Abrir")) {
                 btn.addEventListener("click", () => {
                     localStorage.setItem(SAVE_PENDING_KEY, 'true');
-                    console.log("[DeskAuto] Monitorando salvamento...");
                 });
             }
         });
@@ -184,7 +186,6 @@
                              document.body.innerText.includes("salvo com sucesso");
 
         if (successNotice) {
-            console.log("[DeskAuto] Sucesso detectado!");
             localStorage.removeItem(SAVE_PENDING_KEY);
             const num = await captureNumber();
             showPopup(num);
@@ -208,19 +209,19 @@
         d.style = "position:fixed; bottom:100px; right:20px; z-index:999999; background:white; padding:15px; border-radius:10px; box-shadow:0 5px 20px rgba(0,0,0,0.4); border:2px solid #0078d4; font-family: sans-serif;";
         
         const title = num ? "🚀 Chamado Criado!" : "⚠️ Salvo!";
-        const body = num ? `Número: <strong>${num}</strong>` : "Não consegui capturar o número automaticamente.";
+        const body = num ? `Número: <strong>${num}</strong>` : "Não capturei o número.";
         const msg = `Seu chamado foi registrado com sucesso sob o número ${num}.`;
 
         d.innerHTML = `
             <div style="font-weight:bold; color:#0078d4;">${title}</div>
-            <div style="margin:10px 0; color:#333;">${body}</div>
-            ${num ? `<button id="copy-btn-desk" style="width:100%; cursor:pointer; padding:5px; background:#0078d4; color:white; border:none; border-radius:4px;">Copiar Mensagem</button>` : ''}
+            <div style="margin:10px 0;">${body}</div>
+            ${num ? `<button id="copy-btn-desk" style="width:100%; cursor:pointer;">Copiar Mensagem</button>` : ''}
             <button onclick="document.getElementById('desk-auto-final').remove()" style="margin-top:10px; width:100%; border:none; background:none; font-size:10px; cursor:pointer; color:#999;">Fechar</button>
         `;
         document.body.appendChild(d);
         if(num) document.getElementById("copy-btn-desk").onclick = () => {
             navigator.clipboard.writeText(msg);
-            alert("Mensagem copiada!");
+            alert("Copiado!");
         };
     }
 
