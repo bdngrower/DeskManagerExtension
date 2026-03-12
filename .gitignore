@@ -1,0 +1,9 @@
+node_modules
+.vscode
+validation_log.txt
+final_report.json
+validate_manifest.js
+tmp_template
+'Template'
+.DS_Store
+.env
