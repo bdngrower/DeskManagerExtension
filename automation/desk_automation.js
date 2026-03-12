@@ -1,169 +1,185 @@
 /**
- * Script de Automação para DeskManager (Fase 4 - Completa)
- * Funções: Preenchimento automático, detecção de salvamento e captura de número.
+ * Script de Automação para DeskManager (brasinfo.desk.ms)
+ * Funções: Preenchimento automático em MODAL, detecção de salvamento e captura de número.
  */
 
 (function() {
     const STORAGE_KEY = 'deskmanager_auto_data';
-    const SUCCESS_INDICATOR_STORAGE = 'deskmanager_last_ticket';
+    const SAVE_PENDING_KEY = 'desk_save_pending';
 
-    console.log("[DeskAuto] Iniciando módulo de automação...");
+    console.log("[DeskAuto] Iniciando módulo de automação para brasinfo.desk.ms...");
 
     // 1. Verificar se acabamos de salvar um chamado (para mostrar o resultado)
     checkIfTicketWasSaved();
 
-    // 2. Tentar preencher o formulário (se houver dados pendentes)
-    async function startFilling() {
+    // 2. Tentar preencher o formulário
+    function init() {
         const rawData = localStorage.getItem(STORAGE_KEY);
         if (!rawData) return;
 
-        const data = JSON.parse(rawData);
-        console.log("[DeskAuto] Dados encontrados. Iniciando preenchimento...");
+        console.log("[DeskAuto] Dados aguardando preenchimento...");
 
-        try {
-            await fillField("#assunto", data.subject); // TODO: Adaptar seletor
-            await fillDescription(data.description);
-            await fillAutocomplete("#cliente_nome", data.client); // TODO: Adaptar seletor
-            await fillSelect("#categoria", data.category); // TODO: Adaptar seletor
+        // Usar um Observer para detectar quando o formulário de criação aparece (pois é um modal)
+        const observer = new MutationObserver((mutations, obs) => {
+            // Procurar por campos do modal
+            const descriptionField = document.querySelector("textarea[name='descricao']") || 
+                                   document.querySelector(".cke_wysiwyg_frame") ||
+                                   document.querySelector("#descricao");
 
-            console.log("[DeskAuto] Preenchimento inicial concluído.");
-            
-            // Iniciar observação para o botão de salvar
-            observeSaveAction();
-            
-        } catch (e) {
-            console.error("[DeskAuto] Erro durante preenchimento:", e);
-        }
-    }
-
-    /**
-     * Tenta detectar quando o usuário clica em salvar para monitorar a próxima página
-     */
-    function observeSaveAction() {
-        // TODO: Adaptar o seletor do botão de salvar real (ex: .btn-save, #enviar)
-        const btnSave = document.querySelector("#btn_salvar_chamado") || document.querySelector("button[type='submit']");
-        if (btnSave) {
-            btnSave.addEventListener("click", () => {
-                console.log("[DeskAuto] Salvamento detectado. Preparando captura...");
-                // Marcamos que um salvamento está em curso
-                localStorage.setItem('desk_save_pending', 'true');
-            });
-        }
-    }
-
-    /**
-     * Verifica se a página atual é a de sucesso ou detalhe do chamado
-     */
-    async function checkIfTicketWasSaved() {
-        const isPending = localStorage.getItem('desk_save_pending');
-        
-        // Critério de detecção: Pode ser uma mensagem de sucesso ou a URL mudou
-        // TODO: Adaptar lógica de detecção de sucesso (ex: conferir se existe div.alert-success)
-        const successMessage = document.querySelector(".alert-success") || document.body.innerText.includes("sucesso");
-        
-        if (isPending && successMessage) {
-            console.log("[DeskAuto] Chamado salvo com sucesso detectado!");
-            localStorage.removeItem('desk_save_pending');
-            localStorage.removeItem(STORAGE_KEY); // Limpa o rastro do preenchimento
-
-            try {
-                // TODO: Adaptar o seletor onde o número do chamado aparece (ex: .ticket-id, h1.title)
-                const ticketNumber = await captureTicketNumber();
-                showResultUI(ticketNumber);
-            } catch (e) {
-                console.error("[DeskAuto] Falha ao capturar número:", e);
-                showResultUI(null);
+            if (descriptionField) {
+                console.log("[DeskAuto] Modal de chamado detectado. Preenchendo...");
+                const data = JSON.parse(rawData);
+                fillForm(data);
+                // obs.disconnect(); // Mantemos o observer caso ele queira abrir outro? Não, melhor desconectar após preencher uma vez.
             }
+        });
+
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        // Tentar clicar no botão "+" automaticamente se ele existir e o modal não estiver aberto
+        setTimeout(() => {
+            const btnPlus = document.querySelector(".btn-novo-chamado") || 
+                           document.querySelector(".floating-button") || 
+                           document.querySelector("button i.fa-plus")?.parentElement;
+            
+            if (btnPlus && !document.querySelector("textarea[name='descricao']")) {
+                console.log("[DeskAuto] Clicando no botão '+' para abrir o formulário...");
+                btnPlus.click();
+            }
+        }, 2000);
+    }
+
+    async function fillForm(data) {
+        try {
+            // Preencher Assunto
+            const subjectField = document.querySelector("input[name='assunto']") || 
+                               document.querySelector("#assunto") ||
+                               document.querySelector(".select2-search__field");
+            if (subjectField) {
+                subjectField.value = data.subject;
+                subjectField.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+
+            // Preencher Descrição
+            await fillDescription(data.description);
+
+            // Preencher Solicitante (Geralmente Select2 ou similar)
+            const requesterField = document.querySelector("input[name='solicitante']") || 
+                                 document.querySelector("#solicitante");
+            if (requesterField) {
+                requesterField.value = data.email;
+                requesterField.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+
+            console.log("[DeskAuto] Formulário preenchido com sucesso.");
+            
+            // Monitorar clique no botão de salvar
+            observeSaveAction();
+
+        } catch (e) {
+            console.error("[DeskAuto] Erro ao preencher form:", e);
+        }
+    }
+
+    async function fillDescription(text) {
+        // Tentar textarea simples
+        const textarea = document.querySelector("textarea[name='descricao']") || document.querySelector("#descricao");
+        if (textarea) {
+            textarea.value = text;
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        // Tentar CKEditor (comum no DeskManager)
+        const iframe = document.querySelector('iframe.cke_wysiwyg_frame');
+        if (iframe && iframe.contentDocument) {
+            iframe.contentDocument.body.innerHTML = text.replace(/\n/g, '<br>');
+        }
+    }
+
+    function observeSaveAction() {
+        // Procurar botão de salvar (geralmente .btn-success ou .btn-primary dentro do modal)
+        const saveButtons = document.querySelectorAll("button.btn-success, button.btn-primary, #btn-salvar");
+        saveButtons.forEach(btn => {
+            if (btn.innerText.toLowerCase().includes("salvar") || btn.innerText.toLowerCase().includes("abrir")) {
+                btn.addEventListener("click", () => {
+                    console.log("[DeskAuto] Botão salvar clicado.");
+                    localStorage.setItem(SAVE_PENDING_KEY, 'true');
+                });
+            }
+        });
+    }
+
+    async function checkIfTicketWasSaved() {
+        const isPending = localStorage.getItem(SAVE_PENDING_KEY);
+        if (!isPending) return;
+
+        // Verificar se apareceu mensagem de sucesso (toast/alert)
+        const successNotify = document.querySelector(".toast-success") || 
+                            document.querySelector(".alert-success") ||
+                            document.body.innerText.includes("sucesso");
+
+        if (successNotify) {
+            console.log("[DeskAuto] Sucesso detectado pós-salvamento.");
+            localStorage.removeItem(SAVE_PENDING_KEY);
+            localStorage.removeItem(STORAGE_KEY);
+
+            const number = await captureTicketNumber();
+            showResultUI(number);
         }
     }
 
     async function captureTicketNumber() {
-        // Tenta capturar de vários lugares comuns
-        // TODO: Personalizar conforme o DeskManager real
-        const selectors = [".ticket-number", "#chamado_id", "h2 span", ".breadcrumb .active"];
+        // Tentar pegar do toast ou do detalhe do chamado que abre depois
+        const selectors = [".toast-message", ".ticket-id", "h1", "h2", ".breadcrumb"];
         for (let sel of selectors) {
             const el = document.querySelector(sel);
-            if (el && /\d+/.test(el.innerText)) {
-                return el.innerText.match(/\d+/)[0];
+            if (el) {
+                const match = el.innerText.match(/\d+-\d+/) || el.innerText.match(/\d+/);
+                if (match) return match[0];
             }
         }
-        throw new Error("Número do chamado não encontrado no DOM");
+        return null;
     }
 
-    /**
-     * Renderiza uma pequena UI flutuante com o resultado
-     */
     function showResultUI(number) {
         const div = document.createElement("div");
+        div.id = "desk-auto-result";
         div.style = `
-            position: fixed; top: 20px; right: 20px; z-index: 99999;
-            background: white; padding: 20px; border-radius: 12px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.2); border: 2px solid #0078d4;
-            width: 300px; font-family: 'Segoe UI', sans-serif;
+            position: fixed; bottom: 80px; right: 20px; z-index: 999999;
+            background: white; padding: 15px; border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3); border-left: 5px solid #0078d4;
+            max-width: 300px; font-family: sans-serif;
         `;
 
-        if (!number) {
-            div.innerHTML = `
-                <h3 style="margin-top:0; color: #d83b01;">Atenção</h3>
-                <p>Chamado salvo, mas não consegui capturar o número automaticamente.</p>
-                <button onclick="this.parentElement.remove()" style="width:100%; padding:10px;">Fechar</button>
-            `;
-        } else {
-            const msg = `Seu chamado foi registrado com sucesso sob o número ${number}.`;
-            div.innerHTML = `
-                <h3 style="margin-top:0; color: #0078d4;">Chamado Registrado!</h3>
-                <p style="font-size: 1.2rem; font-weight: bold; text-align: center;">#${number}</p>
-                <div style="display:flex; gap: 5px; margin-bottom: 10px;">
-                    <button id="copy-num" style="flex:1; padding:8px; cursor:pointer;">Copiar Nº</button>
-                    <button id="copy-msg" style="flex:2; padding:8px; cursor:pointer;">Copiar Mensagem</button>
-                </div>
-                <button onclick="this.parentElement.remove()" style="width:100%; padding:5px; background:none; border:none; color:#666; cursor:pointer;">Fechar</button>
-            `;
+        const title = number ? "Chamado Criado!" : "Atenção";
+        const body = number ? `Número: <strong>${number}</strong>` : "Chamado salvo, mas não capturei o número.";
+        const msg = `Seu chamado foi registrado com sucesso sob o número ${number}.`;
 
-            setTimeout(() => {
-                div.querySelector("#copy-num").onclick = () => copyToClipboard(number, "Número copiado!");
-                div.querySelector("#copy-msg").onclick = () => copyToClipboard(msg, "Mensagem pronta copiada!");
-            }, 100);
-        }
+        div.innerHTML = `
+            <div style="font-weight:bold; color:#0078d4; margin-bottom:5px;">${title}</div>
+            <div style="margin-bottom:10px;">${body}</div>
+            ${number ? `
+            <div style="display:flex; gap:5px;">
+                <button id="desk-copy-num" style="flex:1; cursor:pointer; padding:5px;">Copiar Nº</button>
+                <button id="desk-copy-msg" style="flex:1; cursor:pointer; padding:5px;">Mensagem</button>
+            </div>` : ''}
+            <button onclick="document.getElementById('desk-auto-result').remove()" style="margin-top:10px; width:100%; border:none; background:none; color:#999; cursor:pointer; font-size:11px;">Fechar</button>
+        `;
 
         document.body.appendChild(div);
+
+        if (number) {
+            document.getElementById("desk-copy-num").onclick = () => {
+                navigator.clipboard.writeText(number);
+                alert("Número copiado!");
+            };
+            document.getElementById("desk-copy-msg").onclick = () => {
+                navigator.clipboard.writeText(msg);
+                alert("Mensagem copiada!");
+            };
+        }
     }
 
-    function copyToClipboard(text, successMsg) {
-        navigator.clipboard.writeText(text).then(() => {
-            alert(successMsg);
-        });
-    }
-
-    // --- Helpers de Preenchimento (da Fase 3) ---
-
-    async function fillField(sel, val) {
-        const el = document.querySelector(sel);
-        if (el) { el.value = val; el.dispatchEvent(new Event('input', {bubbles:true})); }
-    }
-
-    async function fillDescription(text) {
-        const el = document.querySelector("#descricao") || document.querySelector("[name='descricao']");
-        if (el) el.value = text;
-        // iFrame fallback
-        const iframe = document.querySelector('iframe.cke_wysiwyg_frame');
-        if (iframe) iframe.contentDocument.body.innerHTML = text.replace(/\n/g, '<br>');
-    }
-
-    async function fillAutocomplete(sel, val) {
-        const el = document.querySelector(sel);
-        if (el) { el.value = val; el.focus(); el.dispatchEvent(new Event('input', {bubbles:true})); }
-    }
-
-    async function fillSelect(sel, val) {
-        const el = document.querySelector(sel);
-        if (el) { el.value = val; el.dispatchEvent(new Event('change', {bubbles:true})); }
-    }
-
-    // Execução
-    if (document.readyState === 'complete') {
-        startFilling();
-    } else {
-        window.addEventListener('load', startFilling);
-    }
+    // Iniciar
+    init();
 })();
