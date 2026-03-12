@@ -77,7 +77,9 @@ function saveAndOpenDeskManager() {
 
     // TODO: Substituir pela URL real da tela de novo chamado do seu DeskManager
     // Exemplo: https://suaempresa.desk.manager/ticket/add
-    const DESKMANAGER_NEW_TICKET_URL = "https://brasinfo.desk.ms/?Ticket#ChamadosSuporte"; 
+    const urlParams = new URLSearchParams(window.location.search);
+    const draftId = urlParams.get('draft');
+    const DESKMANAGER_NEW_TICKET_URL = `https://brasinfo.desk.ms/?Ticket&draftId=${draftId}#ChamadosSuporte`; 
     
     // Abrir e garantir foco
     const win = window.open(DESKMANAGER_NEW_TICKET_URL, "_blank");
